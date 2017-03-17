@@ -11,6 +11,164 @@ A look at an Arduino Nano schematics shows that there are four LEDs, one for pow
 
 Next, this sequence needs to be turned into something useful, which means determining the smallest transmission unit, checking that all other transmission patterns are a multiple of this unit, and getting back to a digital value. It turned out that there were only two kinds of patterns at a high state (ie LED on). Interpreting this as Morse code gives you the output value, a 32-character long hexadecimal string.
 
+[Arduino sketch](emergency_transmitter_morse_decoder/emergency_transmitter_morse_decoder.ino) used:
+```Arduino
+int monitorPin = 8;
+int state = 0;
+int prev_state = 0;
+unsigned long count = 0;
+int flushed = 0;
+
+// the setup routine runs once when you press reset:
+void setup() {
+
+  // Open serial communications and wait for port to open:
+  Serial.begin(115200);
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for Leonardo only
+  }
+
+  pinMode(monitorPin, INPUT);
+}
+
+// the loop routine runs over and over again forever:
+void loop() {
+  // read the input pin, delay to stabilize read value
+  delayMicroseconds(50);
+  state = digitalRead(monitorPin);
+
+  if (state == prev_state)
+  {
+    count++;
+  }
+  else
+  {
+    // print out the state
+    if (count < 500)
+    {
+      Serial.write(' ');Serial.print(count);
+    }
+    count = 1;
+    flushed = 0;
+  }
+  if (count >= 500)
+  {
+      if (!flushed)
+      {
+        Serial.write("\n");
+      }
+      flushed = 1;
+  }
+  prev_state = state;
+
+}
+```
+
+[Python script](emergency_transmitter_monitor_bitcount_on_serial.py) used:
+```python
+import serial
+import time
+import numpy as np
+
+ENMORSE = {'A': '.-',     'B': '-...',   'C': '-.-.',
+           'D': '-..',    'E': '.',      'F': '..-.',
+           'G': '--.',    'H': '....',   'I': '..',
+           'J': '.---',   'K': '-.-',    'L': '.-..',
+           'M': '--',     'N': '-.',     'O': '---',
+           'P': '.--.',   'Q': '--.-',   'R': '.-.',
+           'S': '...',    'T': '-',      'U': '..-',
+           'V': '...-',   'W': '.--',    'X': '-..-',
+           'Y': '-.--',   'Z': '--..',
+
+           '0': '-----',  '1': '.----',  '2': '..---',
+           '3': '...--',  '4': '....-',  '5': '.....',
+           '6': '-....',  '7': '--...',  '8': '---..',
+           '9': '----.'
+           }
+
+DEMORSE = dict((v,k) for (k,v) in ENMORSE.items())
+
+# This is not the Riscure Nano, this is the Arduino running the emergency_transmitter_morse_decoder sketch
+serMonitorArduino = serial.Serial(
+    port='/dev/ttyACM0',
+    baudrate=115200,
+    parity=serial.PARITY_NONE,
+    stopbits=serial.STOPBITS_ONE,
+    bytesize=serial.EIGHTBITS
+)
+
+def roundPatterns(lst, length=26):
+    length = float(length)
+    rounded_lst = [int(round(val/length)*length) for val in lst]
+
+    # All pattern lengths are now a multiple of "length"
+    return rounded_lst
+
+def decode(rounded_lst, length=26):
+  morse = []
+  # Some sanitization occurs here: only consider patterns of correct length
+  for count_i, count in enumerate(rounded_lst):
+    if count_i % 2 == 1:
+      # This is the "LED off" state, distinguish between ETU and character separator
+      if count == 5*length:
+          morse.append('  ')
+    else:
+      # This is the "LED on" state, distinguish between short and long pulses
+      if count == length:
+          morse.append('.')
+      elif count == 3*length:
+          morse.append('-')
+
+  try:
+    res = "".join([DEMORSE[v] for v in ("".join(morse)).split()])
+  except KeyError:
+    res = "Couldn't decode"
+
+  return res
+
+def main():
+  serMonitorArduino.isOpen()
+
+  # Clear serial buffers
+  while serMonitorArduino.in_waiting:
+    serMonitorArduino.read(1)
+
+  bitcounts = ""
+  while True:
+
+    while not '\n' in bitcounts:
+      bitcounts += serMonitorArduino.read(1)
+
+    bitcounts_lst = bitcounts.split('\n')
+
+    cb = []
+
+    # Only manage the first bitcounts, up to \n
+    for nb in bitcounts_lst[0].split():
+      try:
+        # Convert serial string to integer list
+        nb = int(nb)
+        cb.append(nb)
+      except ValueError:
+        pass
+
+    # Clean up the collected samples to have all lengths multiple of a unique value
+    rp = roundPatterns(cb)
+
+    # Decode the Morse value
+    de = decode(rp)
+
+    print(de)
+
+    # Pack everything back, if there is anything left the next loop will process it
+    bitcounts = "\n".join(bitcounts_lst[1:])
+
+
+if __name__ == '__main__':
+  main()
+```
+
+
 Now that we can read our output, the next step is to observe the behaviour of the challenge. First, the input length matters:
 - if you provide twice the same input and it is shorter than 16 bytes, you get different outputs
 - if you provide twice the same input and it is 16-byte long, you get identical outputs
