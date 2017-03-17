@@ -1,7 +1,7 @@
 # rhme-2016 write-up Reverse
 
 ## Table of contents
- * [Reverse]
+ * [Reverse](README.md)
    * [Jumpy](Jumpy.md)
    * [The Impostor](TheImpostor.md)
    * [FridgeJIT](FridgeJIT.md)
